@@ -65,17 +65,20 @@ class MainActivity : ComponentActivity() {
               modifier = Modifier.fillMaxSize()
             )
           } else {
-            Box(
-              modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Transparent)
-            )
+            // If assistant mode is closed, finish the activity
+            finish()
           }
         } else {
           ChatHomeScreen(
             viewModel = chatViewModel,
             modifier = Modifier.fillMaxSize()
           )
+        }
+        // Properly handle the case where Assistant closes
+        LaunchedEffect(isAssistantMode) {
+          if (lastLaunchWasAssist && !isAssistantMode) {
+            finish()
+          }
         }
       }
     }

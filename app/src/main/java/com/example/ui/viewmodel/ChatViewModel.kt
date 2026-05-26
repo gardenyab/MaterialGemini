@@ -66,6 +66,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     )
     val dynamicColorEnabled: StateFlow<Boolean> = _dynamicColorEnabled.asStateFlow()
 
+    private val _isGradientEnabled = MutableStateFlow(
+        sharedPrefs.getBoolean("is_gradient_enabled", true)
+    )
+    val isGradientEnabled: StateFlow<Boolean> = _isGradientEnabled.asStateFlow()
+
     private val _apiKey = MutableStateFlow(sharedPrefs.getString("api_key", "") ?: "")
     val apiKey: StateFlow<String> = _apiKey.asStateFlow()
 
@@ -292,6 +297,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun setDynamicColor(enabled: Boolean) {
         _dynamicColorEnabled.value = enabled
         sharedPrefs.edit().putBoolean("dynamic_colors", enabled).apply()
+    }
+
+    fun setGradientEnabled(enabled: Boolean) {
+        _isGradientEnabled.value = enabled
+        sharedPrefs.edit().putBoolean("is_gradient_enabled", enabled).apply()
     }
 
     fun setApiKey(key: String) {

@@ -38,6 +38,7 @@ import com.example.data.db.MessageEntity
 import com.example.ui.components.MarkdownText
 import com.example.ui.viewmodel.ChatViewModel
 import com.example.ui.viewmodel.ThemeMode
+import com.example.R
 import kotlinx.coroutines.launch
 import android.content.Intent
 import android.speech.RecognitionListener
@@ -47,6 +48,7 @@ import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.asImageBitmap
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
@@ -70,6 +72,7 @@ fun ChatHomeScreen(
 
     val apiKeyVal by viewModel.apiKey.collectAsStateWithLifecycle()
     val selectedModelVal by viewModel.selectedModel.collectAsStateWithLifecycle()
+    val isGradientEnabledVal by viewModel.isGradientEnabled.collectAsStateWithLifecycle()
 
     val isAssistantMode by viewModel.isAssistantMode.collectAsStateWithLifecycle()
     val assistantResponse by viewModel.assistantResponse.collectAsStateWithLifecycle()
@@ -299,6 +302,8 @@ fun ChatHomeScreen(
                 onApiKeyChange = { viewModel.setApiKey(it) },
                 selectedModel = selectedModelVal,
                 onModelChange = { viewModel.setSelectedModel(it) },
+                isGradientEnabled = isGradientEnabledVal,
+                onGradientChange = { viewModel.setGradientEnabled(it) },
                 onDismiss = { showSettings = false }
             )
         }
@@ -393,13 +398,19 @@ fun ChatHomeScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(baseDimColor)
-                    .background(
-                        Brush.linearGradient(
-                            colors = listOf(primaryGradientColor, secondaryGradientColor, ambientGradientColor, Color.Transparent),
-                            start = androidx.compose.ui.geometry.Offset(0f + gradientShift, 0f),
-                            end = androidx.compose.ui.geometry.Offset(1000f + gradientShift, 1000f)
-                        )
-                    )
+                    .let { modifier ->
+                        if (isGradientEnabledVal) {
+                            modifier.background(
+                                Brush.linearGradient(
+                                    colors = listOf(primaryGradientColor, secondaryGradientColor, ambientGradientColor, Color.Transparent),
+                                    start = androidx.compose.ui.geometry.Offset(0f + gradientShift, 0f),
+                                    end = androidx.compose.ui.geometry.Offset(1000f + gradientShift, 1000f)
+                                )
+                            )
+                        } else {
+                            modifier
+                        }
+                    }
                     .clickable { dialogTransitionState.targetState = false },
                 contentAlignment = Alignment.BottomCenter
             ) {
@@ -439,33 +450,9 @@ fun ChatHomeScreen(
                             // Header Row
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                                horizontalArrangement = Arrangement.Start,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .background(
-                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                                            RoundedCornerShape(12.dp)
-                                        )
-                                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Face,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "Цифровой Ассистент",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                                
                                 IconButton(
                                     onClick = { 
                                         dialogTransitionState.targetState = false
@@ -483,7 +470,8 @@ fun ChatHomeScreen(
                                 }
                             }
 
-                            // Dynamic Conversations Bubble Area
+                        // Dynamic Conversations Bubble Area (Conditionally visible)
+                        if (assistantMessages.isNotEmpty()) {
                             val assistantScrollState = rememberLazyListState()
                             LaunchedEffect(assistantMessages.size, isAssistantGenerating) {
                                 if (assistantMessages.isNotEmpty()) {
@@ -497,87 +485,55 @@ fun ChatHomeScreen(
                                     .weight(1f)
                                     .heightIn(max = 360.dp)
                             ) {
-                                if (assistantMessages.isEmpty() && !isAssistantGenerating) {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .align(Alignment.Center)
-                                            .padding(16.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Face,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
-                                            modifier = Modifier.size(44.dp)
-                                        )
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Text(
-                                            text = "Вы вызвали ассистента Gemini!",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            textAlign = TextAlign.Center
-                                        )
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(
-                                            text = "Введите любой вопрос ниже или отправьте фото для создания чата с историей.",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            textAlign = TextAlign.Center
-                                        )
-                                    }
-                                } else {
-                                    LazyColumn(
-                                        state = assistantScrollState,
-                                        modifier = Modifier.fillMaxWidth(),
-                                        contentPadding = PaddingValues(bottom = 8.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        items(
-                                            items = assistantMessages,
-                                            key = { it.id }
-                                        ) { message ->
-                                            val isMsgUser = message.sender == "user"
-                                            val visibleState = remember(message.id) {
-                                                androidx.compose.animation.core.MutableTransitionState(false).apply {
-                                                    targetState = true
-                                                }
-                                            }
-                                            Box(modifier = Modifier.fillMaxWidth()) {
-                                                androidx.compose.animation.AnimatedVisibility(
-                                                    visibleState = visibleState,
-                                                    enter = fadeIn(animationSpec = tween(400)) + slideInHorizontally(
-                                                        initialOffsetX = { if (isMsgUser) 120 else -120 },
-                                                        animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow)
-                                                    ),
-                                                    exit = fadeOut(animationSpec = tween(150))
-                                                ) {
-                                                    MessageBubble(message = message)
-                                                }
+                                LazyColumn(
+                                    state = assistantScrollState,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentPadding = PaddingValues(bottom = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    items(
+                                        items = assistantMessages,
+                                        key = { it.id }
+                                    ) { message ->
+                                        val isMsgUser = message.sender == "user"
+                                        val visibleState = remember(message.id) {
+                                            androidx.compose.animation.core.MutableTransitionState(false).apply {
+                                                targetState = true
                                             }
                                         }
+                                        Box(modifier = Modifier.fillMaxWidth()) {
+                                            androidx.compose.animation.AnimatedVisibility(
+                                                visibleState = visibleState,
+                                                enter = fadeIn(animationSpec = tween(400)) + slideInHorizontally(
+                                                    initialOffsetX = { if (isMsgUser) 120 else -120 },
+                                                    animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow)
+                                                ),
+                                                exit = fadeOut(animationSpec = tween(150))
+                                            ) {
+                                                MessageBubble(message = message)
+                                            }
+                                        }
+                                    }
 
-                                        if (isAssistantGenerating) {
-                                            item {
-                                                Row(
-                                                    modifier = Modifier.padding(12.dp),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                                ) {
-                                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 1.5.dp)
-                                                    Text(
-                                                        text = "Формирование ответа...",
-                                                        style = MaterialTheme.typography.bodyMedium,
-                                                        color = MaterialTheme.colorScheme.primary
-                                                    )
-                                                }
+                                    if (isAssistantGenerating) {
+                                        item {
+                                            Row(
+                                                modifier = Modifier.padding(12.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 1.5.dp)
+                                                Text(
+                                                    text = "Формирование ответа...",
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
                                             }
                                         }
                                     }
                                 }
                             }
+                        }
 
                             // Image Attachment Thumbnail Preview Line
                             if (attachedAssistantBitmap != null) {
@@ -618,9 +574,11 @@ fun ChatHomeScreen(
 
                             // Dynamic Input Control Bar
                             Surface(
-                                shape = RoundedCornerShape(24.dp),
+                                shape = RoundedCornerShape(50.dp),
                                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 8.dp)
                             ) {
                                 Row(
                                     modifier = Modifier
@@ -656,7 +614,9 @@ fun ChatHomeScreen(
                                                 override fun onError(error: Int) { isListening = false }
                                                 override fun onResults(results: android.os.Bundle?) {
                                                     val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                                                    matches?.firstOrNull()?.let { assistantInput = it }
+                                                    matches?.firstOrNull()?.let { 
+                                                        assistantInput = it 
+                                                    }
                                                     isListening = false
                                                 }
                                                 override fun onPartialResults(partialResults: android.os.Bundle?) {}
@@ -682,7 +642,7 @@ fun ChatHomeScreen(
                                         TextField(
                                             value = assistantInput,
                                             onValueChange = { assistantInput = it },
-                                            placeholder = { Text("Спросите ассистента...", style = MaterialTheme.typography.bodyMedium) },
+                                            placeholder = { Text(text = stringResource(id = R.string.message_placeholder), style = MaterialTheme.typography.bodyMedium) },
                                             modifier = Modifier.weight(1f),
                                             maxLines = 3,
                                             colors = TextFieldDefaults.colors(
@@ -1508,6 +1468,8 @@ fun SettingsScreenContent(
     onApiKeyChange: (String) -> Unit,
     selectedModel: String,
     onModelChange: (String) -> Unit,
+    isGradientEnabled: Boolean,
+    onGradientChange: (Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
     Scaffold(
@@ -1579,6 +1541,8 @@ fun SettingsScreenContent(
                 }
             }
 
+            Spacer(modifier = Modifier.height(16.dp))
+
             // Theme section
             Text(
                 text = "ВНЕШНИЙ ВИД",
@@ -1630,6 +1594,31 @@ fun SettingsScreenContent(
                         onClick = { onModeChange(ThemeMode.DARK) }
                     )
                 }
+            }
+
+            // Gradient settings
+            Text(
+                text = "АНИМАЦИЯ",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                SettingsSwitchRow(
+                    title = "Анимация градиента",
+                    description = "Включает или выключает анимированный градиент фона",
+                    isChecked = isGradientEnabled,
+                    onCheckedChange = onGradientChange,
+                    icon = Icons.Default.Star
+                )
             }
 
             // Material You Switch Card
@@ -1830,6 +1819,49 @@ fun SettingsSelectableRow(
         RadioButton(
             selected = isSelected,
             onClick = onClick
+        )
+    }
+}
+
+@Composable
+fun SettingsSwitchRow(
+    title: String,
+    description: String,
+    isChecked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    icon: androidx.compose.ui.graphics.vector.ImageVector
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { onCheckedChange(!isChecked) }
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = if (isChecked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(modifier = Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = isChecked,
+            onCheckedChange = onCheckedChange
         )
     }
 }

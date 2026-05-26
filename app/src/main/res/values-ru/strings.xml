@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">MaterialGemini</string>
+    <string name="message_placeholder">Сообщение...</string>
+</resources>
