@@ -39,11 +39,19 @@ import com.example.ui.components.MarkdownText
 import com.example.ui.viewmodel.ChatViewModel
 import com.example.ui.viewmodel.ThemeMode
 import kotlinx.coroutines.launch
+import android.content.Intent
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.asImageBitmap
 import android.graphics.BitmapFactory
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import android.widget.Toast
 
 @OptIn(ExperimentalAnimationApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -348,13 +356,31 @@ fun ChatHomeScreen(
                     try {
                         val contentResolver = assistantContext.contentResolver
                         val mime = contentResolver.getType(uri) ?: "image/png"
-                        val inputStream = contentResolver.openInputStream(uri)
-                        val bytes = inputStream?.readBytes()
-                        if (bytes != null) {
-                            val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                        
+                        // Use BitmapFactory.Options to decode the image with sample size to prevent OOM
+                        val options = BitmapFactory.Options().apply {
+                            inJustDecodeBounds = true
+                        }
+                        contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+                        
+                        // Limit size to max 1024x1024 (e.g.)
+                        var sampleSize = 1
+                        while (options.outWidth / sampleSize > 1024 || options.outHeight / sampleSize > 1024) {
+                            sampleSize *= 2
+                        }
+                        
+                        options.inJustDecodeBounds = false
+                        options.inSampleSize = sampleSize
+                        
+                        val bmp = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+                        
+                        if (bmp != null) {
+                            val baos = java.io.ByteArrayOutputStream()
+                            bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, baos)
+                            val b64 = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
+                            
                             attachedAssistantImageB64 = b64
-                            attachedAssistantMimeType = mime
-                            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            attachedAssistantMimeType = "image/jpeg"
                             attachedAssistantBitmap = bmp
                         }
                     } catch (e: Exception) {
@@ -603,43 +629,118 @@ fun ChatHomeScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    IconButton(
-                                        onClick = { assistantFilePicker.launch("image/*") }
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Add,
-                                            contentDescription = "Прикрепить фото",
-                                            tint = MaterialTheme.colorScheme.primary
-                                        )
+                                    // Microphone for Voice Input
+                                    val context = LocalContext.current
+                                    val activity = context as? android.app.Activity
+                                    val speechRecognizer = remember { SpeechRecognizer.createSpeechRecognizer(context) }
+                                    var isListening by remember { mutableStateOf(false) }
+                                    var rms by remember { mutableStateOf(0f) }
+                                    
+                                    val permissionLauncher = rememberLauncherForActivityResult(
+                                        ActivityResultContracts.RequestPermission()
+                                    ) { isGranted ->
+                                        if (isGranted) {
+                                            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                                                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                                                // Support Russian, Ukrainian, and English
+                                                val languages = arrayListOf("ru-RU", "uk-UA", "en-US")
+                                                putExtra(RecognizerIntent.EXTRA_SUPPORTED_LANGUAGES, languages)
+                                                putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "ru-RU") 
+                                            }
+                                            speechRecognizer.setRecognitionListener(object : RecognitionListener {
+                                                override fun onReadyForSpeech(params: android.os.Bundle?) { isListening = true }
+                                                override fun onBeginningOfSpeech() {}
+                                                override fun onRmsChanged(rmsDb: Float) { rms = rmsDb }
+                                                override fun onBufferReceived(buffer: ByteArray?) {}
+                                                override fun onEndOfSpeech() { isListening = false }
+                                                override fun onError(error: Int) { isListening = false }
+                                                override fun onResults(results: android.os.Bundle?) {
+                                                    val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                                                    matches?.firstOrNull()?.let { assistantInput = it }
+                                                    isListening = false
+                                                }
+                                                override fun onPartialResults(partialResults: android.os.Bundle?) {}
+                                                override fun onEvent(eventType: Int, params: android.os.Bundle?) {}
+                                            })
+                                            speechRecognizer.startListening(intent)
+                                        } else {
+                                            Toast.makeText(context, "Permission denied", Toast.LENGTH_SHORT).show()
+                                        }
                                     }
 
-                                    TextField(
-                                        value = assistantInput,
-                                        onValueChange = { assistantInput = it },
-                                        placeholder = { Text("Спросите ассистента...", style = MaterialTheme.typography.bodyMedium) },
-                                        modifier = Modifier.weight(1f),
-                                        maxLines = 3,
-                                        colors = TextFieldDefaults.colors(
-                                            focusedContainerColor = Color.Transparent,
-                                            unfocusedContainerColor = Color.Transparent,
-                                            disabledContainerColor = Color.Transparent,
-                                            focusedIndicatorColor = Color.Transparent,
-                                            unfocusedIndicatorColor = Color.Transparent
-                                        ),
-                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                                        keyboardActions = KeyboardActions(onSend = {
-                                            if (assistantInput.isNotBlank()) {
-                                                val txt = assistantInput
-                                                val b64 = attachedAssistantImageB64
-                                                val mime = attachedAssistantMimeType
-                                                assistantInput = ""
-                                                attachedAssistantImageB64 = null
-                                                attachedAssistantMimeType = null
-                                                attachedAssistantBitmap = null
-                                                viewModel.sendAssistantMessage(txt, b64, mime)
+                                    if (!isListening) {
+                                        IconButton(
+                                            onClick = { assistantFilePicker.launch("image/*") }
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Add,
+                                                contentDescription = "Прикрепить фото",
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+
+                                        TextField(
+                                            value = assistantInput,
+                                            onValueChange = { assistantInput = it },
+                                            placeholder = { Text("Спросите ассистента...", style = MaterialTheme.typography.bodyMedium) },
+                                            modifier = Modifier.weight(1f),
+                                            maxLines = 3,
+                                            colors = TextFieldDefaults.colors(
+                                                focusedContainerColor = Color.Transparent,
+                                                unfocusedContainerColor = Color.Transparent,
+                                                disabledContainerColor = Color.Transparent,
+                                                focusedIndicatorColor = Color.Transparent,
+                                                unfocusedIndicatorColor = Color.Transparent
+                                            ),
+                                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                                            keyboardActions = KeyboardActions(onSend = {
+                                                if (assistantInput.isNotBlank()) {
+                                                    val txt = assistantInput
+                                                    val b64 = attachedAssistantImageB64
+                                                    val mime = attachedAssistantMimeType
+                                                    assistantInput = ""
+                                                    attachedAssistantImageB64 = null
+                                                    attachedAssistantMimeType = null
+                                                    attachedAssistantBitmap = null
+                                                    viewModel.sendAssistantMessage(txt, b64, mime)
+                                                }
+                                            })
+                                        )
+                                        
+                                        IconButton(
+                                            onClick = {
+                                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                                             }
-                                        })
-                                    )
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Mic,
+                                                contentDescription = "Голосовой ввод",
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    } else {
+                                        // Active visualizer
+                                        val errorColor = MaterialTheme.colorScheme.error
+                                        Canvas(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(48.dp)
+                                                .padding(8.dp)
+                                        ) {
+                                            val centerY = size.height / 2
+                                            val waveCount = 15
+                                            for (i in 0 until waveCount) {
+                                                val offset = i * (size.width / waveCount)
+                                                val amplitude = (rms / 20f) * (size.height / 2) * (1f - Math.abs(i - waveCount / 2f) / (waveCount / 2f))
+                                                drawLine(
+                                                   color = errorColor,
+                                                   start = androidx.compose.ui.geometry.Offset(offset, centerY - amplitude),
+                                                   end = androidx.compose.ui.geometry.Offset(offset, centerY + amplitude),
+                                                   strokeWidth = 6f
+                                                )
+                                            }
+                                        }
+                                    }
 
                                     val isSendEnabled = assistantInput.isNotBlank() || attachedAssistantBitmap != null
                                     IconButton(

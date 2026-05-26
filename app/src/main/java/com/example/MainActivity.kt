@@ -89,6 +89,12 @@ class MainActivity : ComponentActivity() {
       chatViewModel.setAssistantMode(true)
     } else {
       lastLaunchWasAssist = false
+      chatViewModel.setAssistantMode(false)
     }
+  }
+
+  // Add this method to ChatViewModel to explicitly finish Assistant activity
+  fun finishActivity() {
+      finish()
   }
 }
