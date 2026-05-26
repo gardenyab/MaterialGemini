@@ -2,12 +2,15 @@ package com.example.ui.screens
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -36,6 +39,12 @@ import com.example.ui.components.MarkdownText
 import com.example.ui.viewmodel.ChatViewModel
 import com.example.ui.viewmodel.ThemeMode
 import kotlinx.coroutines.launch
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.asImageBitmap
+import android.graphics.BitmapFactory
+import android.widget.Toast
 
 @OptIn(ExperimentalAnimationApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
@@ -51,6 +60,14 @@ fun ChatHomeScreen(
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val dynamicColors by viewModel.dynamicColorEnabled.collectAsStateWithLifecycle()
 
+    val apiKeyVal by viewModel.apiKey.collectAsStateWithLifecycle()
+    val selectedModelVal by viewModel.selectedModel.collectAsStateWithLifecycle()
+
+    val isAssistantMode by viewModel.isAssistantMode.collectAsStateWithLifecycle()
+    val assistantResponse by viewModel.assistantResponse.collectAsStateWithLifecycle()
+    val isAssistantGenerating by viewModel.isAssistantGenerating.collectAsStateWithLifecycle()
+    val assistantMessages by viewModel.assistantMessages.collectAsStateWithLifecycle()
+
     var showSettings by remember { mutableStateOf(false) }
     var mobileDraweOpen by remember { mutableStateOf(false) }
 
@@ -60,7 +77,8 @@ fun ChatHomeScreen(
     val scope = rememberCoroutineScope()
 
     Box(modifier = modifier.fillMaxSize()) {
-        if (isTablet) {
+        if (!isAssistantMode) {
+            if (isTablet) {
             // Dual Pane Layout for Tablet Support
             Row(modifier = Modifier.fillMaxSize()) {
                 // Left Panel: Chats List (Fixed width 280.dp)
@@ -69,21 +87,25 @@ fun ChatHomeScreen(
                     color = MaterialTheme.colorScheme.surfaceContainerLow,
                     tonalElevation = 1.dp
                 ) {
-                    ChatSidebarContent(
-                        conversations = conversations,
-                        currentConv = currentConv,
-                        onSelectConv = { viewModel.selectConversation(it) },
-                        onNewConv = { viewModel.startNewConversation() },
-                        onDeleteConv = { viewModel.deleteConversation(it) },
-                        onOpenSettings = { showSettings = true }
-                    )
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        Box(modifier = Modifier.weight(1f)) {
+                            ChatSidebarContent(
+                                conversations = conversations,
+                                currentConv = currentConv,
+                                onSelectConv = { viewModel.selectConversation(it) },
+                                onNewConv = { viewModel.startNewConversation() },
+                                onDeleteConv = { viewModel.deleteConversation(it) },
+                                onOpenSettings = { showSettings = true }
+                            )
+                        }
+                    }
                 }
 
                 Divider(
                     modifier = Modifier
                         .fillMaxHeight()
                         .width(1.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant
+					color = MaterialTheme.colorScheme.outlineVariant
                 )
 
                 // Right Panel: Active Chat Room
@@ -107,7 +129,7 @@ fun ChatHomeScreen(
                                 conversation = activeConv,
                                 messages = messages,
                                 isGenerating = isGenerating,
-                                onSendMessage = { text -> viewModel.sendMessage(text) },
+                                onSendMessage = { text, img, mime -> viewModel.sendMessage(text, img, mime) },
                                 isTablet = true,
                                 onToggleSidebar = {}
                             )
@@ -177,7 +199,7 @@ fun ChatHomeScreen(
                                     conversation = activeConv,
                                     messages = messages,
                                     isGenerating = isGenerating,
-                                    onSendMessage = { text -> viewModel.sendMessage(text) },
+                                    onSendMessage = { text, img, mime -> viewModel.sendMessage(text, img, mime) },
                                     isTablet = false,
                                     onToggleSidebar = { mobileDraweOpen = true }
                                 )
@@ -245,15 +267,415 @@ fun ChatHomeScreen(
             }
         }
 
-        // Beautiful Settings Overlay Dialog
-        if (showSettings) {
-            SettingsDialog(
+        } // Конец блока !isAssistantMode
+
+        // Beautiful Settings Overlay Screen with right-to-left sliding animation
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showSettings,
+            enter = slideInHorizontally(
+                initialOffsetX = { it },
+                animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMedium)
+            ) + fadeIn(tween(300)),
+            exit = slideOutHorizontally(
+                targetOffsetX = { it },
+                animationSpec = tween(250)
+            ) + fadeOut(tween(250)),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            SettingsScreenContent(
                 currentMode = themeMode,
                 dynamicColors = dynamicColors,
                 onModeChange = { viewModel.changeThemeMode(it) },
                 onDynamicChange = { viewModel.setDynamicColor(it) },
+                apiKey = apiKeyVal,
+                onApiKeyChange = { viewModel.setApiKey(it) },
+                selectedModel = selectedModelVal,
+                onModelChange = { viewModel.setSelectedModel(it) },
                 onDismiss = { showSettings = false }
             )
+        }
+
+        // DIGITAL ASSISTANT FLOATING SIMULATED OVERLAY SHEET
+        if (isAssistantMode) {
+            var assistantInput by remember { mutableStateOf("") }
+
+            // Using MutableTransitionState to orchestrate beautiful entrance AND exit transitions
+            val dialogTransitionState = remember {
+                androidx.compose.animation.core.MutableTransitionState(false).apply {
+                    targetState = true
+                }
+            }
+
+            // Monitor state changes to dismiss completely only after exit animation finishes
+            LaunchedEffect(dialogTransitionState.currentState, dialogTransitionState.targetState) {
+                if (!dialogTransitionState.currentState && !dialogTransitionState.targetState) {
+                    viewModel.setAssistantMode(false)
+                }
+            }
+            
+            // Soft and elegant ambient flowing animated gradient representing intelligence
+            val infiniteTransition = rememberInfiniteTransition(label = "assistant_bg")
+            val gradientShift by infiniteTransition.animateFloat(
+                initialValue = 0f,
+                targetValue = 1500f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(12000, easing = LinearEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "assistant_bg_shift"
+            )
+
+            val backgroundAlpha by animateFloatAsState(
+                targetValue = if (dialogTransitionState.targetState) 1f else 0f,
+                animationSpec = tween(400, easing = LinearOutSlowInEasing),
+                label = "background_alpha"
+            )
+
+            val baseDimColor = Color.Black.copy(alpha = 0.60f * backgroundAlpha)
+            val primaryGradientColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.60f * backgroundAlpha)
+            val secondaryGradientColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.50f * backgroundAlpha)
+            val ambientGradientColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.40f * backgroundAlpha)
+
+            var attachedAssistantImageB64 by remember { mutableStateOf<String?>(null) }
+            var attachedAssistantMimeType by remember { mutableStateOf<String?>(null) }
+            var attachedAssistantBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+
+            val assistantContext = LocalContext.current
+            val assistantFilePicker = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.GetContent()
+            ) { uri ->
+                if (uri != null) {
+                    try {
+                        val contentResolver = assistantContext.contentResolver
+                        val mime = contentResolver.getType(uri) ?: "image/png"
+                        val inputStream = contentResolver.openInputStream(uri)
+                        val bytes = inputStream?.readBytes()
+                        if (bytes != null) {
+                            val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                            attachedAssistantImageB64 = b64
+                            attachedAssistantMimeType = mime
+                            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            attachedAssistantBitmap = bmp
+                        }
+                    } catch (e: Exception) {
+                        Toast.makeText(assistantContext, "Ошибка загрузки: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(baseDimColor)
+                    .background(
+                        Brush.linearGradient(
+                            colors = listOf(primaryGradientColor, secondaryGradientColor, ambientGradientColor, Color.Transparent),
+                            start = androidx.compose.ui.geometry.Offset(0f + gradientShift, 0f),
+                            end = androidx.compose.ui.geometry.Offset(1000f + gradientShift, 1000f)
+                        )
+                    )
+                    .clickable { dialogTransitionState.targetState = false },
+                contentAlignment = Alignment.BottomCenter
+            ) {
+                androidx.compose.animation.AnimatedVisibility(
+                    visibleState = dialogTransitionState,
+                    enter = slideInVertically(
+                        initialOffsetY = { it },
+                        animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)
+                    ) + fadeIn(tween(400)),
+                    exit = slideOutVertically(
+                        targetOffsetY = { it },
+                        animationSpec = tween(350, easing = FastOutLinearInEasing)
+                    ) + fadeOut(tween(300)),
+                    modifier = Modifier
+                        .navigationBarsPadding()
+                        .imePadding()
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .widthIn(max = 600.dp)
+                            .heightIn(max = 520.dp)
+                            .padding(horizontal = 16.dp, vertical = 20.dp)
+                            .clickable(enabled = false, onClick = {}),
+                        shape = RoundedCornerShape(28.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.98f)
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 12.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            // Header Row
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .background(
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                            RoundedCornerShape(12.dp)
+                                        )
+                                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Face,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Цифровой Ассистент",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                
+                                IconButton(
+                                    onClick = { 
+                                        dialogTransitionState.targetState = false
+                                    },
+                                    modifier = Modifier.background(
+                                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+                                        CircleShape
+                                    )
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Закрыть ассистента",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+                            // Dynamic Conversations Bubble Area
+                            val assistantScrollState = rememberLazyListState()
+                            LaunchedEffect(assistantMessages.size, isAssistantGenerating) {
+                                if (assistantMessages.isNotEmpty()) {
+                                    assistantScrollState.animateScrollToItem(assistantMessages.size - 1)
+                                }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f)
+                                    .heightIn(max = 360.dp)
+                            ) {
+                                if (assistantMessages.isEmpty() && !isAssistantGenerating) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .align(Alignment.Center)
+                                            .padding(16.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Face,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+                                            modifier = Modifier.size(44.dp)
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = "Вы вызвали ассистента Gemini!",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            textAlign = TextAlign.Center
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = "Введите любой вопрос ниже или отправьте фото для создания чата с историей.",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                } else {
+                                    LazyColumn(
+                                        state = assistantScrollState,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        contentPadding = PaddingValues(bottom = 8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        items(
+                                            items = assistantMessages,
+                                            key = { it.id }
+                                        ) { message ->
+                                            val isMsgUser = message.sender == "user"
+                                            val visibleState = remember(message.id) {
+                                                androidx.compose.animation.core.MutableTransitionState(false).apply {
+                                                    targetState = true
+                                                }
+                                            }
+                                            Box(modifier = Modifier.fillMaxWidth()) {
+                                                androidx.compose.animation.AnimatedVisibility(
+                                                    visibleState = visibleState,
+                                                    enter = fadeIn(animationSpec = tween(400)) + slideInHorizontally(
+                                                        initialOffsetX = { if (isMsgUser) 120 else -120 },
+                                                        animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow)
+                                                    ),
+                                                    exit = fadeOut(animationSpec = tween(150))
+                                                ) {
+                                                    MessageBubble(message = message)
+                                                }
+                                            }
+                                        }
+
+                                        if (isAssistantGenerating) {
+                                            item {
+                                                Row(
+                                                    modifier = Modifier.padding(12.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                                ) {
+                                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 1.5.dp)
+                                                    Text(
+                                                        text = "Формирование ответа...",
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        color = MaterialTheme.colorScheme.primary
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Image Attachment Thumbnail Preview Line
+                            if (attachedAssistantBitmap != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                                        .size(64.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                                ) {
+                                    Image(
+                                        bitmap = attachedAssistantBitmap!!.asImageBitmap(),
+                                        contentDescription = "Превью",
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                    )
+                                    IconButton(
+                                        onClick = {
+                                            attachedAssistantImageB64 = null
+                                            attachedAssistantMimeType = null
+                                            attachedAssistantBitmap = null
+                                        },
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .size(20.dp)
+                                            .background(Color.Black.copy(alpha = 0.6f), CircleShape)
+                                            .padding(2.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Удалить фото",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Dynamic Input Control Bar
+                            Surface(
+                                shape = RoundedCornerShape(24.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    IconButton(
+                                        onClick = { assistantFilePicker.launch("image/*") }
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Add,
+                                            contentDescription = "Прикрепить фото",
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+
+                                    TextField(
+                                        value = assistantInput,
+                                        onValueChange = { assistantInput = it },
+                                        placeholder = { Text("Спросите ассистента...", style = MaterialTheme.typography.bodyMedium) },
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 3,
+                                        colors = TextFieldDefaults.colors(
+                                            focusedContainerColor = Color.Transparent,
+                                            unfocusedContainerColor = Color.Transparent,
+                                            disabledContainerColor = Color.Transparent,
+                                            focusedIndicatorColor = Color.Transparent,
+                                            unfocusedIndicatorColor = Color.Transparent
+                                        ),
+                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                                        keyboardActions = KeyboardActions(onSend = {
+                                            if (assistantInput.isNotBlank()) {
+                                                val txt = assistantInput
+                                                val b64 = attachedAssistantImageB64
+                                                val mime = attachedAssistantMimeType
+                                                assistantInput = ""
+                                                attachedAssistantImageB64 = null
+                                                attachedAssistantMimeType = null
+                                                attachedAssistantBitmap = null
+                                                viewModel.sendAssistantMessage(txt, b64, mime)
+                                            }
+                                        })
+                                    )
+
+                                    val isSendEnabled = assistantInput.isNotBlank() || attachedAssistantBitmap != null
+                                    IconButton(
+                                        onClick = {
+                                            if (isSendEnabled) {
+                                                val txt = assistantInput.ifBlank { "Прикрепленное фото" }
+                                                val b64 = attachedAssistantImageB64
+                                                val mime = attachedAssistantMimeType
+                                                assistantInput = ""
+                                                attachedAssistantImageB64 = null
+                                                attachedAssistantMimeType = null
+                                                attachedAssistantBitmap = null
+                                                viewModel.sendAssistantMessage(txt, b64, mime)
+                                            }
+                                        },
+                                        enabled = isSendEnabled,
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .background(
+                                                if (isSendEnabled) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                                CircleShape
+                                            )
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Send,
+                                            contentDescription = "Отправить",
+                                            tint = if (isSendEnabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -333,7 +755,7 @@ fun ChatSidebarContent(
             text = "ИСТОРИЯ ЧАТОВ",
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
         )
 
@@ -347,7 +769,7 @@ fun ChatSidebarContent(
                 Text(
                     text = "История пока пуста",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(16.dp)
                 )
@@ -385,10 +807,11 @@ fun ChatSidebarContent(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text(
-                                text = "💬",
-                                fontSize = 16.sp,
-                                modifier = Modifier.padding(end = 4.dp)
+                            Icon(
+                                imageVector = Icons.Default.Send,
+                                contentDescription = null,
+                                modifier = Modifier.padding(end = 4.dp).size(18.dp),
+                                tint = textColor
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
@@ -446,14 +869,14 @@ fun EmptyWelcomeState(
         // Expressive Gemini Logo Orb with animating color gradients
         Box(
             modifier = Modifier
-                .size(120.dp)
+                .size(125.dp)
                 .clip(CircleShape)
                 .background(
                     Brush.linearGradient(
                         colors = listOf(
-                            Color(0xFF9E00FF),
-                            Color(0xFF00E0FF),
-                            Color(0xFFFF007A)
+                            MaterialTheme.colorScheme.primaryContainer,
+                            MaterialTheme.colorScheme.secondaryContainer,
+                            MaterialTheme.colorScheme.tertiaryContainer
                         ),
                         start = androidx.compose.ui.geometry.Offset(0f + gradientShift, 0f),
                         end = androidx.compose.ui.geometry.Offset(1000f - gradientShift, 1000f)
@@ -461,9 +884,11 @@ fun EmptyWelcomeState(
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = "✨",
-                fontSize = 52.sp
+            Icon(
+                imageVector = Icons.Filled.Star,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(54.dp)
             )
         }
 
@@ -475,7 +900,7 @@ fun EmptyWelcomeState(
             fontWeight = FontWeight.Black,
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurface
-        )
+		)
 
         Spacer(modifier = Modifier.height(12.dp))
 
@@ -512,7 +937,7 @@ fun ChatRoomArea(
     conversation: Conversation,
     messages: List<MessageEntity>,
     isGenerating: Boolean,
-    onSendMessage: (String) -> Unit,
+    onSendMessage: (String, String?, String?) -> Unit,
     isTablet: Boolean,
     onToggleSidebar: () -> Unit
 ) {
@@ -520,6 +945,34 @@ fun ChatRoomArea(
     val keyboardController = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
     val scrollState = rememberLazyListState()
+
+    val context = LocalContext.current
+    var attachedImageB64 by remember { mutableStateOf<String?>(null) }
+    var attachedMimeType by remember { mutableStateOf<String?>(null) }
+    var attachedBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val contentResolver = context.contentResolver
+                val mime = contentResolver.getType(uri) ?: "image/png"
+                val inputStream = contentResolver.openInputStream(uri)
+                val bytes = inputStream?.readBytes()
+                if (bytes != null) {
+                    val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                    attachedImageB64 = b64
+                    attachedMimeType = mime
+                    
+                    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    attachedBitmap = bmp
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Не удалось прочитать файл: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     // Key to scroll down whenever messages change size or generation finishes/starts
     LaunchedEffect(messages.size, isGenerating) {
@@ -546,9 +999,11 @@ fun ChatRoomArea(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "💬",
-                            fontSize = 20.sp
+                        Icon(
+                            imageVector = Icons.Default.Send,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp)
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         Text(
@@ -560,9 +1015,9 @@ fun ChatRoomArea(
                     }
                     
                     Text(
-                        text = "Чат работает через Gemini 3.5 Flash",
+                        text = "Чат работает через Gemini API",
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
                     )
                 }
             }
@@ -583,15 +1038,17 @@ fun ChatRoomArea(
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text(
-                        text = "👇",
-                        fontSize = 48.sp
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(48.dp)
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
                         text = "Введите ваш первый запрос ниже...",
                         style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
             } else {
@@ -601,8 +1058,29 @@ fun ChatRoomArea(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(messages) { message ->
-                        MessageBubble(message = message)
+                    items(
+                        items = messages,
+                        key = { it.id }
+                    ) { message ->
+                        val isUser = message.sender == "user"
+                        val visibleState = remember(message.id) {
+                            MutableTransitionState(false).apply {
+                                targetState = true
+                            }
+                        }
+                        
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            androidx.compose.animation.AnimatedVisibility(
+                                visibleState = visibleState,
+                                enter = fadeIn(animationSpec = tween(400)) + slideInHorizontally(
+                                    initialOffsetX = { if (isUser) 120 else -120 },
+                                    animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow)
+                                ),
+                                exit = fadeOut(animationSpec = tween(150))
+                            ) {
+                                MessageBubble(message = message)
+                            }
+                        }
                     }
 
                     if (isGenerating) {
@@ -614,19 +1092,69 @@ fun ChatRoomArea(
             }
         }
 
+        // Selected media attachment card preview
+        if (attachedBitmap != null) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Image(
+                        bitmap = attachedBitmap!!.asImageBitmap(),
+                        contentDescription = "Выбранный файл",
+                        modifier = Modifier
+                            .size(54.dp)
+                            .clip(RoundedCornerShape(8.dp)),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Выбранное изображение",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = attachedMimeType ?: "image/png",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        )
+                    }
+                    IconButton(onClick = {
+                        attachedBitmap = null
+                        attachedImageB64 = null
+                        attachedMimeType = null
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Удалить файл",
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+        }
+
         // Message input area
         Surface(
-            modifier = Modifier.fillMaxWidth(),
-            tonalElevation = 2.dp,
-            color = MaterialTheme.colorScheme.surfaceContainer
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding(),
+            tonalElevation = 1.dp,
+            color = MaterialTheme.colorScheme.surface
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 12.dp)
-                    .navigationBarsPadding()
-                    .imePadding(),
-                verticalAlignment = Alignment.Bottom,
+                    .navigationBarsPadding(),
+                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 TextField(
@@ -635,9 +1163,27 @@ fun ChatRoomArea(
                     placeholder = { Text("Спросите что-нибудь у Gemini...") },
                     modifier = Modifier
                         .weight(1f)
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(MaterialTheme.colorScheme.surface),
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
                     maxLines = 4,
+                    leadingIcon = {
+                        IconButton(onClick = { filePicker.launch("image/*") }) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Добавить фото",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    },
+                    trailingIcon = {
+                        IconButton(onClick = { /* Decorational Action or Info */ }) {
+                            Icon(
+                                imageVector = Icons.Default.Star,
+                                contentDescription = "Инфо",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                        }
+                    },
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = Color.Transparent,
                         unfocusedContainerColor = Color.Transparent,
@@ -650,27 +1196,47 @@ fun ChatRoomArea(
                     ),
                     keyboardActions = KeyboardActions(
                         onSend = {
-                            if (rawInputText.isNotBlank()) {
+                            if (rawInputText.isNotBlank() || attachedImageB64 != null) {
                                 val textToSend = rawInputText
+                                val imgB64 = attachedImageB64
+                                val imgMime = attachedMimeType
                                 rawInputText = ""
-                                onSendMessage(textToSend)
+                                attachedImageB64 = null
+                                attachedMimeType = null
+                                attachedBitmap = null
+                                onSendMessage(textToSend, imgB64, imgMime)
                                 keyboardController?.hide()
                             }
                         }
                     )
                 )
 
+                val hasInput = rawInputText.isNotBlank() || attachedImageB64 != null
+                val sendButtonBg = if (hasInput) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                }
+                val sendButtonContentColor = if (hasInput) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                }
+
                 Box(
                     modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (rawInputText.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
-                        )
-                        .clickable(enabled = rawInputText.isNotBlank()) {
+                        .size(54.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(sendButtonBg)
+                        .clickable(enabled = hasInput) {
                             val textToSend = rawInputText
+                            val imgB64 = attachedImageB64
+                            val imgMime = attachedMimeType
                             rawInputText = ""
-                            onSendMessage(textToSend)
+                            attachedImageB64 = null
+                            attachedMimeType = null
+                            attachedBitmap = null
+                            onSendMessage(textToSend, imgB64, imgMime)
                             keyboardController?.hide()
                         },
                     contentAlignment = Alignment.Center
@@ -678,7 +1244,7 @@ fun ChatRoomArea(
                     Icon(
                         imageVector = Icons.Default.Send,
                         contentDescription = "Отправить",
-                        tint = if (rawInputText.isNotBlank()) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                        tint = sendButtonContentColor
                     )
                 }
             }
@@ -697,19 +1263,19 @@ fun MessageBubble(message: MessageEntity) {
     val containerColor = if (isUser) {
         MaterialTheme.colorScheme.primary
     } else {
-        MaterialTheme.colorScheme.surfaceVariant
+        MaterialTheme.colorScheme.primaryContainer
     }
     val contentColor = if (isUser) {
         MaterialTheme.colorScheme.onPrimary
     } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
+        MaterialTheme.colorScheme.onPrimaryContainer
     }
 
-    // Modern M3 asymmetry: rounded bubble corners
+    // Modern M3 asymmetry: rounded bubble corners matching "Sleek Interface" (28dp)
     val shape = if (isUser) {
-        RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 2.dp)
+        RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp, bottomStart = 28.dp, bottomEnd = 4.dp)
     } else {
-        RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 2.dp, bottomEnd = 18.dp)
+        RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp, bottomStart = 4.dp, bottomEnd = 28.dp)
     }
 
     Column(
@@ -719,14 +1285,27 @@ fun MessageBubble(message: MessageEntity) {
         Surface(
             shape = shape,
             color = containerColor,
-            tonalElevation = if (isUser) 0.dp else 1.dp,
-            modifier = Modifier.widthIn(max = 320.dp)
+            tonalElevation = if (isUser) 1.dp else 2.dp,
+            modifier = Modifier.widthIn(max = 340.dp)
         ) {
-            Box(modifier = Modifier.padding(14.dp)) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                if (!message.imageB64.isNullOrEmpty()) {
+                    Base64Image(
+                        b64 = message.imageB64,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 220.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .padding(bottom = 8.dp)
+                    )
+                }
                 if (isUser) {
                     Text(
                         text = message.text,
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            fontSize = 15.sp,
+                            lineHeight = 22.sp
+                        ),
                         color = contentColor
                     )
                 } else {
@@ -815,83 +1394,181 @@ fun ThinkingDotAnimation() {
 }
 
 /**
- * Settings Overlay Dialog
+ * Settings Screen Content showing beautifully categorized cards and large Material 3 typography
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsDialog(
+fun SettingsScreenContent(
     currentMode: ThemeMode,
     dynamicColors: Boolean,
     onModeChange: (ThemeMode) -> Unit,
     onDynamicChange: (Boolean) -> Unit,
+    apiKey: String,
+    onApiKeyChange: (String) -> Unit,
+    selectedModel: String,
+    onModelChange: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = "Настройки интерфейса",
-                fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.titleLarge
+    Scaffold(
+        topBar = {
+            LargeTopAppBar(
+                title = {
+                    Text(
+                        text = "Настройки",
+                        fontWeight = FontWeight.Black,
+                        style = MaterialTheme.typography.headlineMedium
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Default.ArrowBack,
+                            contentDescription = "Назад",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.largeTopAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
             )
         },
-        text = {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+        containerColor = MaterialTheme.colorScheme.surface
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
+        ) {
+            // General Info Card
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                ),
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    text = "Выберите предпочтительную тему оформления и включите динамические цвета Material You.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Divider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                // Theme selection
-                Text(
-                    text = "Тема оформления",
-                    fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.labelMedium
-                )
-
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    ThemeModeRadioButton(
-                        text = "Системная тема",
-                        selected = currentMode == ThemeMode.SYSTEM,
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(36.dp)
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column {
+                        Text(
+                            text = "Персонализация ИИ",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Text(
+                            text = "Настройте тему оформления, выберите модель нейросети Gemini или установите собственный API-ключ для общения.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                        )
+                    }
+                }
+            }
+
+            // Theme section
+            Text(
+                text = "ВНЕШНИЙ ВИД",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    SettingsSelectableRow(
+                        title = "Системная тема",
+                        description = "Автоматическая подстройка под параметры Android",
+                        isSelected = currentMode == ThemeMode.SYSTEM,
+                        icon = Icons.Default.Settings,
                         onClick = { onModeChange(ThemeMode.SYSTEM) }
                     )
-                    ThemeModeRadioButton(
-                        text = "Светлая тема",
-                        selected = currentMode == ThemeMode.LIGHT,
+                    
+                    Divider(
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+
+                    SettingsSelectableRow(
+                        title = "Светлая тема",
+                        description = "Светлое и минималистичное оформление",
+                        isSelected = currentMode == ThemeMode.LIGHT,
+                        icon = Icons.Default.Home,
                         onClick = { onModeChange(ThemeMode.LIGHT) }
                     )
-                    ThemeModeRadioButton(
-                        text = "Тёмная тема",
-                        selected = currentMode == ThemeMode.DARK,
+
+                    Divider(
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+
+                    SettingsSelectableRow(
+                        title = "Тёмная тема",
+                        description = "Глубокий чёрный цвет для экономии энергии",
+                        isSelected = currentMode == ThemeMode.DARK,
+                        icon = Icons.Default.Star,
                         onClick = { onModeChange(ThemeMode.DARK) }
                     )
                 }
+            }
 
-                Divider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                // Material You settings
+            // Material You Switch Card
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Цвета Material You",
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.bodyMedium
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Build,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
                         )
-                        Text(
-                            text = "Динамические цвета на основе обоев устройства (Android 12+)",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column {
+                            Text(
+                                text = "Цвета Material You",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                            Text(
+                                text = "Динамическая палитра на основе Ваших обоев",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                     Switch(
                         checked = dynamicColors,
@@ -899,34 +1576,179 @@ fun SettingsDialog(
                     )
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text(text = "Готово", fontWeight = FontWeight.Bold)
+
+            // AI Model selection section
+            Text(
+                text = "МОДЕЛЬ НЕЙРОСЕТИ",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    listOf(
+                        "gemini-3.5-flash" to Pair("Gemini 3.5 Flash", "Новое поколение моделей ИИ с невероятной скоростью"),
+                        "gemini-3.1-flash-lite" to Pair("Gemini 3.1 Flash Lite", "Облегченная сверхскоростная модель"),
+                        "gemini-2.5-flash" to Pair("Gemini 2.5 Flash", "Сбалансированная и проверенная генерация информации"),
+                        "gemini-2.0-flash" to Pair("Gemini 2.0 Flash", "Универсальный и умный базовый интеллект")
+                    ).forEachIndexed { index, (modelId, info) ->
+                        val (name, desc) = info
+                        SettingsSelectableRow(
+                            title = name,
+                            description = desc,
+                            isSelected = selectedModel == modelId,
+                            icon = Icons.Default.Star,
+                            onClick = { onModelChange(modelId) }
+                        )
+
+                        if (index < 3) {
+                            Divider(
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
+                        }
+                    }
+                }
             }
+
+            // API Key Details
+            Text(
+                text = "БЕЗОПАСНОСТЬ И ДОСТУП",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column {
+                            Text(
+                                text = "Персональный API-Ключ Gemini",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                            Text(
+                                text = "Используйте собственный ключ, чтобы избежать лимитов запросов",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = apiKey,
+                        onValueChange = onApiKeyChange,
+                        label = { Text("Ключ API Gemini") },
+                        placeholder = { Text("Используется встроенный ключ по умолчанию") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                        )
+                    )
+
+                    Text(
+                        text = "Кусок вашего ключа шифруется и безопасно сохраняется в локальной песочнице устройства. Оставьте поле пустым, чтобы вернуться к базовому ключу.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
         }
-    )
+    }
 }
 
 @Composable
-fun ThemeModeRadioButton(
-    text: String,
-    selected: Boolean,
+fun SettingsSelectableRow(
+    title: String,
+    description: String,
+    isSelected: Boolean,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
     onClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(12.dp))
             .clickable { onClick() }
-            .padding(vertical = 4.dp),
+            .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(modifier = Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         RadioButton(
-            selected = selected,
+            selected = isSelected,
             onClick = onClick
         )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(text = text, style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+@Composable
+fun Base64Image(b64: String, modifier: Modifier = Modifier) {
+    val bitmap = remember(b64) {
+        try {
+            val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        } catch (e: Exception) {
+            null
+        }
+    }
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = "Прикрепленное изображение",
+            modifier = modifier,
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+        )
     }
 }

@@ -22,5 +22,7 @@ data class MessageEntity(
     val conversationId: Int,
     val sender: String, // "user" or "gemini"
     val text: String,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val imageB64: String? = null,
+    val imageMimeType: String? = null
 )

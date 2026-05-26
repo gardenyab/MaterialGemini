@@ -34,6 +34,10 @@ class ChatRepository(private val chatDao: ChatDao) {
         chatDao.deleteMessagesForConversation(conversationId)
     }
 
+    suspend fun insertMessage(message: MessageEntity): Long = withContext(Dispatchers.IO) {
+        chatDao.insertMessage(message)
+    }
+
     /**
      * Sends a message to Gemini and stores both user input and API response in Room.
      */
@@ -41,13 +45,19 @@ class ChatRepository(private val chatDao: ChatDao) {
         conversationId: Int,
         promptText: String,
         history: List<MessageEntity>,
-        isNewConversation: Boolean
+        isNewConversation: Boolean,
+        selectedModel: String,
+        customApiKey: String?,
+        imageB64: String? = null,
+        imageMimeType: String? = null
     ): String = withContext(Dispatchers.IO) {
         // 1. Save user message to database
         val userMessage = MessageEntity(
             conversationId = conversationId,
             sender = "user",
-            text = promptText
+            text = promptText,
+            imageB64 = imageB64,
+            imageMimeType = imageMimeType
         )
         chatDao.insertMessage(userMessage)
 
@@ -67,24 +77,45 @@ class ChatRepository(private val chatDao: ChatDao) {
         // Add existing conversation history
         for (msg in history) {
             val role = if (msg.sender == "user") "user" else "model"
+            val partsList = mutableListOf<Part>()
+            if (msg.imageB64 != null && msg.imageMimeType != null) {
+                partsList.add(Part(inlineData = Blob(mimeType = msg.imageMimeType, data = msg.imageB64)))
+            }
+            partsList.add(Part(text = msg.text))
             contents.add(
                 Content(
                     role = role,
-                    parts = listOf(Part(text = msg.text))
+                    parts = partsList
                 )
             )
         }
         
         // Add current User message
+        val currentParts = mutableListOf<Part>()
+        if (imageB64 != null && imageMimeType != null) {
+            currentParts.add(Part(inlineData = Blob(mimeType = imageMimeType, data = imageB64)))
+        }
+        currentParts.add(Part(text = promptText))
         contents.add(
             Content(
                 role = "user",
-                parts = listOf(Part(text = promptText))
+                parts = currentParts
             )
         )
 
         // 3. Resolve API key with fallback
-        val apiKey = getApiKey()
+        val apiKey = if (!customApiKey.isNullOrEmpty()) customApiKey else getApiKey()
+
+        if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY" || apiKey == "GEMINI_API_KEY") {
+            val errorMessage = "API-ключ не установлен! Пожалуйста, получите API-ключ на сайте Google AI Studio и введите его в настройках приложения (значок шестеренки в правом верхнем углу)."
+            val errorEntity = MessageEntity(
+                conversationId = conversationId,
+                sender = "gemini",
+                text = errorMessage
+            )
+            chatDao.insertMessage(errorEntity)
+            return@withContext errorMessage
+        }
 
         // 4. Call Gemini REST service
         val request = GenerateContentRequest(
@@ -99,7 +130,7 @@ class ChatRepository(private val chatDao: ChatDao) {
         )
 
         try {
-            val response = RetrofitClient.service.generateContent(apiKey, request)
+            val response = RetrofitClient.service.generateContent(selectedModel, apiKey, request)
             val replyText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
                 ?: "К сожалению, от Gemini не пришло текстового ответа."
 
@@ -131,8 +162,7 @@ class ChatRepository(private val chatDao: ChatDao) {
         return if (!configKey.isNullOrEmpty() && configKey != "MY_GEMINI_API_KEY" && configKey != "GEMINI_API_KEY") {
             configKey
         } else {
-            // Secure fallback specified in task prompt
-            "AIzaSyAw7iYMsuUTDIHToIiEoiDTFqpzQp74i5A"
+            ""
         }
     }
 }

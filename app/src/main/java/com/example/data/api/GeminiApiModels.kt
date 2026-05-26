@@ -5,7 +5,14 @@ import com.squareup.moshi.JsonClass
 
 @JsonClass(generateAdapter = true)
 data class Part(
-    @Json(name = "text") val text: String? = null
+    @Json(name = "text") val text: String? = null,
+    @Json(name = "inlineData") val inlineData: Blob? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class Blob(
+    @Json(name = "mimeType") val mimeType: String,
+    @Json(name = "data") val data: String
 )
 
 @JsonClass(generateAdapter = true)

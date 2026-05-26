@@ -74,13 +74,19 @@ fun MarkdownText(
                         ) {
                             Text(
                                 text = "• ",
-                                style = MaterialTheme.typography.bodyLarge,
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontSize = 15.sp,
+                                    lineHeight = 22.sp
+                                ),
                                 fontWeight = FontWeight.Black,
                                 color = MaterialTheme.colorScheme.primary
                             )
                             Text(
                                 text = parseInlineMarkdown(block.text),
-                                style = MaterialTheme.typography.bodyLarge,
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontSize = 15.sp,
+                                    lineHeight = 22.sp
+                                ),
                                 color = color
                             )
                         }
@@ -88,7 +94,10 @@ fun MarkdownText(
                     is MarkdownBlock.Paragraph -> {
                         Text(
                             text = parseInlineMarkdown(block.text),
-                            style = MaterialTheme.typography.bodyLarge,
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontSize = 15.sp,
+                                lineHeight = 22.sp
+                            ),
                             color = color
                         )
                     }
