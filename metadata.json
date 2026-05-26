@@ -1,0 +1,6 @@
+{
+  "name": "Gemini Chat",
+  "description": "Интеллектуальный чат-ассистент, работающий через Gemini 3.5 Flash с локальным сохранением истории в Room Database и изысканным дизайном Material 3 Expressive с поддержкой динамических цветов Material You.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
